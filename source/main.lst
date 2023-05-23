@@ -1,0 +1,564 @@
+gavrasm Gerd's AVR assembler version 5.4 (C)2022 by DG4FAC
+----------------------------------------------------------
+Source file: C:\Users\cadec\OneDrive\Desktop\SophSpring\CS278\Final_Project_gimli/source/main.asm
+Hex file:    C:\Users\cadec\OneDrive\Desktop\SophSpring\CS278\Final_Project_gimli/source/main.hex
+Eeprom file: C:\Users\cadec\OneDrive\Desktop\SophSpring\CS278\Final_Project_gimli/source/main.eep
+Compiled:    18.05.2023, 18:26:20
+Pass:        2
+     1: ; CS 278-1 Final Project
+     2: ;
+     3: ; Created: 4/27/2023
+     4: ; Author : Wes and Cade
+     5: ;
+     6: ; compile with:
+     7: ; gavrasm.exe -b main.asm
+     8: ; 
+     9: ; upload with:
+    10: ; avrdude -c arduino -p atmega328p -P COM4 -U main.hex
+    11: ;
+    12: ; Resources:
+    13: ; ----------
+    14: ;  https://whitgit.whitworth.edu/2023/spring/CS-278-1/in_class/-/blob/main/Directives_EEPROM_class/source/mem_testing_solution.asm
+    15: ;  Scott Office Hours
+    16: ;  https://cdn-shop.adafruit.com/product-files/1138/SK6812+LED+datasheet+.pdf
+    17: ;
+    18: ; Project Demo Links:
+    19: ; -------------------
+    20: ;  -VIDEO LINKS: https://www.youtube.com/shorts/U3yyU9lK8Zc | https://www.youtube.com/shorts/CwkMbfWHXT4
+    21: 
+    22: 
+    23: .DEVICE ATmega328p ;Define the correct device
+    24: ;;;;;;;;;;;;;;;;;;;;;;;
+    25: ;; Interrupt Vectors ;;
+    26: ;;;;;;;;;;;;;;;;;;;;;;;
+    27: 
+    28: .DEF LED_COUNT = r24        ; Defines a register to use for LED count used throughout the program
+    29: .DEF WEATHER_TYPE = r23     ; Defines a register to use for the weather type throughout the program
+    30: 
+    31: 
+    32: ; Runs the code at the memory location
+    33: ; reti / nop is to simply 'return' from the interrupt if it triggers (i.e. the default is to do nothing)
+    34: .cseg
+    35: .org 000000 ; Start at memory location 0
+    36: 000000   C086  rjmp ChipSetUp ; Reset vector
+    37: 000001   0000  nop
+    38: 000002   9518  reti ; INT0
+    39: 000003   0000  nop
+    40: 000004   9518  reti ; INT1
+    41: 000005   0000  nop
+    42: 000006   9518  reti ; PCI0
+    43: 000007   0000  nop
+    44: 000008   9518  reti ; PCI1
+    45: 000009   0000  nop
+    46: 00000A   9518  reti ; PCI2
+    47: 00000B   0000  nop
+    48: 00000C   9518  reti ; WDT
+    49: 00000D   0000  nop
+    50: 00000E   9518  reti ; OC2A
+    51: 00000F   0000  nop
+    52: 000010   9518  reti ; OC2B
+    53: 000011   0000  nop
+    54: 000012   9518  reti ; OVF2
+    55: 000013   0000  nop
+    56: 000014   9518  reti ; ICP1
+    57: 000015   0000  nop
+    58: 000016   9518  reti ; OC1A
+    59: 000017   0000  nop
+    60: 000018   9518  reti ; OC1B
+    61: 000019   0000  nop
+    62: 00001A   9518  reti ; OVF1
+    63: 00001B   0000  nop
+    64: 00001C   9518  reti ; OC0A
+    65: 00001D   0000  nop
+    66: 00001E   9518  reti ; OC0B
+    67: 00001F   0000  nop
+    68: 000020   9518  reti ; OVF0
+    69: 000021   0000  nop
+    70: 000022   9518  reti ; SPI
+    71: 000023   0000  nop
+    72: 000024   C00F  rjmp int_usart_rx ; URXC
+    73: 000025   0000  nop
+    74: 000026   9518  reti ; UDRE
+    75: 000027   0000  nop
+    76: 000028   9518  reti ; UTXC
+    77: 000029   0000  nop
+    78: 00002A   9518  reti ; ADCC
+    79: 00002B   0000  nop
+    80: 00002C   9518  reti ; ERDY
+    81: 00002D   0000  nop
+    82: 00002E   9518  reti ; ACI
+    83: 00002F   0000  nop
+    84: 000030   9518  reti ; TWI
+    85: 000031   0000  nop
+    86: 000032   9518  reti ; SPMR
+    87: 000033   0000  nop 
+    88: 
+    89: 
+    90: ;--------------------------------------------------------------------------------------
+    91: ; USART RX INTERRUPT HANDLER:
+    92: ; ---------------------------
+    93: int_usart_rx:
+    94: 000034   930F  push r16			; Push r16 onto the stack - this register is used to store from UDR0	
+    95: 000035   931F  push r17			; Push r17 onto the stack
+    96: 000036   932F  push r18            ; Push r18 onto the stack
+    97: 
+    98: 000037   940E  call resetPixels    ; Call the resetPixel subroutine, this will clear the ring of all color - just used to ensure the only color showing is the correct one from run to run
+        000038   00F9
+    99: 
+   100: 000039   9100  lds r16, UDR0		; Load the first bit of information being sent to board
+        00003A   00C6
+   101: 00003B   3000  cpi r16, $00		; Compare the first part of the message to $00 to see if it is a correct message type
+   102: 00003C   F009  breq processMsg		; If message from script starts with the proper value begin processing the message
+   103: 00003D   C045  rjmp endRx			; If message from python script does not start with $00 then exit the interrupt 
+   104: 
+   105: ; processMsg:
+   106: ; -> Acts as sort of a filter
+   107: ; -> Checks the type of weather it is today
+   108: ; -> Based off that it branches to the correct way to process that information
+   109: ; -> First few lines are crucial - it waits for the 
+   110: processMsg:
+   111: 00003E   9110  lds r17, UCSR0A		; Load data from UCSR0A into r17
+        00003F   00C0
+   112: 000040   FF17  sbrs r17, RXC0		; Check if the receive buffer is empty
+   113: 000041   CFFC  rjmp processMsg		; If the receive buffer is empty, continue waiting
+   114: 
+   115: 000042   9100  lds r16, UDR0		; Load the next byte from the receive buffer
+        000043   00C6
+   116: 
+   117: 000044   3100  cpi r16, $10		; Check if the value is $10 (clear weather)
+   118: 000045   F031  breq setClear		; If the value is $10, set the weather to clear
+   119: 
+   120: 000046   3200  cpi r16, $20		; Check if the value is $20 (gray weather)
+   121: 000047   F089  breq setOvercast	; If the value is $20, set the weather to gray
+   122: 
+   123: 000048   3300  cpi r16, $30		; Check if the value is $30 (showers)
+   124: 000049   F0E1  breq setShowers		; If the value is $30, set the weather to showers
+   125: 		
+   126: 00004A   3400  cpi r16, $40		; Check if the value is $40 (thunderstorms)
+   127: 00004B   F139  breq setTstorms		; If the value is $40, set the weather to thunderstorms
+   128: 
+   129: setClear:
+   130:     ; The next few lines of code are used to wait for the USART receive buffer to clear before we load more messages
+   131: 00004C   9110  lds r17, UCSR0A		; Load data from UCSR0A into r17
+        00004D   00C0
+   132: 00004E   FF17  sbrs r17, RXC0		; Check if the receive buffer is empty
+   133: 00004F   CFFC  rjmp setClear		; If the receive buffer is empty, continue waiting
+   134: 
+   135: 000050   2F20  mov r18, r16        ; Move the value of r16 into r18 - Moves the weather type part of sript message into 18 - clears r16 sp it can be used to store more messages
+   136: 	
+   137: 000051   9100  lds r16, UDR0		; Load the next byte from the receive buffer
+        000052   00C6
+   138: 000053   2F80  mov LED_COUNT, r16  ; Move the value received from scrapy, just moving the count into LED_COUNT
+   139: 000054   3080  cpi LED_COUNT, 0    ; Compare the LED count received from the python sript
+   140: 000055   F151  breq zeroTemp       ; If it is zero we dont want to print out anything so jump to zeroTemp
+   141: 000056   940E  call setNeoWeather  ; Call subroutine to print out to LEDs
+        000057   0091
+   142: 000058   C02A  rjmp endRx			; Return from the interrupt
+   143: 
+   144: setOvercast:
+   145:     ; The next few lines of code are used to wait for the USART receive buffer to clear before we load more messages
+   146: 000059   9110  lds r17, UCSR0A		; Load data from UCSR0A into r17
+        00005A   00C0
+   147: 00005B   FF17  sbrs r17, RXC0		; Check if the receive buffer is empty
+   148: 00005C   CFFC  rjmp setOvercast	; If the receive buffer is empty, continue waiting
+   149: 
+   150: 00005D   2F20  mov r18, r16        ; Move the value of r16 into r18 - Moves the weather type part of sript message into 18 - clears r16 sp it can be used to store more messages
+   151: 
+   152: 00005E   9100  lds r16, UDR0		; Load the next byte from the receive buffer
+        00005F   00C6
+   153: 000060   2F80  mov LED_COUNT, r16  ; Move the value received from scrapy, just moving the count into LED_COUNT
+   154: 000061   3080  cpi LED_COUNT, 0    ; Compare the LED count received from the python sript
+   155: 000062   F0E9  breq zeroTemp       ; If it is zero we dont want to print out anything so jump to zeroTemp
+   156: 000063   940E  call setNeoWeather  ; Call subroutine to print out to LEDs
+        000064   0091
+   157: 000065   C01D  rjmp endRx			; Return from the interrupt
+   158: 
+   159: setShowers:
+   160: 	; The next few lines of code are used to wait for the USART receive buffer to clear before we load more messages
+   161: 000066   9110  lds r17, UCSR0A		; Load data from UCSR0A into r17
+        000067   00C0
+   162: 000068   FF17  sbrs r17, RXC0		; Check if the receive buffer is empty
+   163: 000069   CFFC  rjmp setShowers		; If the receive buffer is empty, continue waiting
+   164: 
+   165: 00006A   2F20  mov r18, r16        ; Move the value of r16 into r18 - Moves the weather type part of sript message into 18 - clears r16 sp it can be used to store more messages
+   166: 
+   167: 00006B   9100  lds r16, UDR0		; Load the next byte from the receive buffer
+        00006C   00C6
+   168: 00006D   2F80  mov LED_COUNT, r16  ; Move the value received from scrapy, just moving the count into LED_COUNT
+   169: 00006E   3080  cpi LED_COUNT, 0    ; Compare the LED count received from the python sript
+   170: 00006F   F081  breq zeroTemp       ; If it is zero we dont want to print out anything so jump to zeroTemp
+   171: 000070   940E  call setNeoWeather  ; Call subroutine to print out to LEDs
+        000071   0091
+   172: 000072   C010  rjmp endRx			; Return from the interrupt
+   173: 
+   174: setTstorms:
+   175:     ; The next few lines of code are used to wait for the USART receive buffer to clear before we load more messages
+   176: 000073   9110  lds r17, UCSR0A		; Load data from UCSR0A into r17
+        000074   00C0
+   177: 000075   FF17  sbrs r17, RXC0		; Check if the receive buffer is empty
+   178: 000076   CFFC  rjmp setTstorms		; If the receive buffer is empty, continue waiting
+   179: 
+   180: 000077   2F20  mov r18, r16        ; Move the value of r16 into r18 - Moves the weather type part of sript message into 18 - clears r16 sp it can be used to store more messages
+   181: 
+   182: 000078   9100  lds r16, UDR0		; Load the next byte from the receive buffer
+        000079   00C6
+   183: 00007A   2F80  mov LED_COUNT, r16  ; Move the value received from scrapy, just moving the count into LED_COUNT
+   184: 00007B   3080  cpi LED_COUNT, 0    ; Compare the LED count received from the python sript
+   185: 00007C   F019  breq zeroTemp       ; If it is zero we dont want to print out anything so jump to zeroTemp
+   186: 00007D   940E  call setNeoWeather  ; Call subroutine to print out to LEDs
+        00007E   0091
+   187: 00007F   C003  rjmp endRx			; Return from the interrupt
+   188: 
+   189: zeroTemp:
+   190: 000080   940E  call resetPixels    ; Call the reset pixel subroutine if LED count is zero
+        000081   00F9
+   191: 000082   C000  rjmp endRx          ; Jump to the end of receive interrut
+   192: 
+   193: endRx:
+   194: 000083   912F  pop r18             ; Pop r18 from the stack
+   195: 000084   911F  pop r17				; Pop r17 from the stack
+   196: 000085   910F  pop r16				; Pop r16 from the stack
+   197: 000086   9518  reti				; Return from the interrupt
+   198: 
+   199: 
+   200: ;---------------------------------------------------------------------------------
+   201: ; CONFIGURES CHIP:
+   202: ; ---------------
+   203: ChipSetUp:
+   204:     ; Set up the stack pointer (for calling subroutines / interrupts)
+   205: 000087   E0F8  ldi r31, $08 ; Set high part of stack pointer
+   206: 000088   BFFE  out SPH, r31
+   207: 000089   EFFF  ldi r31, $ff ; set low part of stack pointer
+   208: 00008A   BFFD  out SPL, r31
+   209: 
+   210: 	; PortD set up
+   211: 	; set up port D:7-4 as output
+   212: 	;ldi r20, $A0 ; PORTD - 'data' in portd (every other)
+   213: 00008B   EF5F  ldi r21, $ff ; DDRD - data direction (Upper 5 output)
+   214: 00008C   B95A  out DDRD, r21 ; Send configuration
+   215: 
+   216:     ;USART set up
+   217: 00008D   940E  call USART_Init
+        00008E   010F
+   218: 
+   219: 00008F   9478  sei ; Turn on interrupts!
+   220: 
+   221: 
+   222: ;==================================================================================
+   223: ; MAIN LOOP:
+   224: ; ----------
+   225: motherLoop:
+   226: 000090   CFFF  rjmp motherLoop
+   227: ;==================================================================================
+   228: 
+   229: 
+   230: ;-----------------------------------------------------------------------------------
+   231: ; SEND WEATHER REPORT:
+   232: ; --------------------
+   233: setNeoWeather:
+   234: 000091   930F  push r16                ; Push the value of register r16 onto the stack
+   235: 
+   236: 000092   958A  dec LED_COUNT           ; Decrement the value of LED_COUNT by 1
+   237: 
+   238: 000093   3120  cpi r18, $10            ; Compare the value in register r18 with 10
+   239: 000094   F031  breq setTypeClear       ; Branch to setTypeClear if they are equal
+   240: 
+   241: 000095   3220  cpi r18, $20            ; Compare the value in register r18 with 20
+   242: 000096   F039  breq setTypeOvercast    ; Branch to setTypeOvercast if they are equal
+   243: 
+   244: 000097   3320  cpi r18, $30            ; Compare the value in register r18 with 30
+   245: 000098   F041  breq setTypeShower      ; Branch to setTypeShower if they are equal
+   246: 
+   247: 000099   3420  cpi r18, $40            ; Compare the value in register r18 with 40
+   248: 00009A   F049  breq setTypeTstorms     ; Branch to setTypeTstorms if they are equal
+   249: 
+   250: setTypeClear:
+   251: 00009B   E0F2  ldi ZH, HIGH(clear*2)   ; Load the high byte of the memory address of 'clear' multiplied by 2 into ZH
+   252: 00009C   E6E6  ldi ZL, LOW(clear*2)    ; Load the low byte of the memory address of 'clear' multiplied by 2 into ZL
+   253: 00009D   C009  rjmp outColor           ; Jump to the outColor label
+   254: 
+   255: setTypeOvercast:
+   256: 00009E   E0F2  ldi ZH, HIGH(overcast*2) ; Load the high byte of the memory address of 'overcast' multiplied by 2 into ZH
+   257: 00009F   E6EA  ldi ZL, LOW(overcast*2)  ; Load the low byte of the memory address of 'overcast' multiplied by 2 into ZL
+   258: 0000A0   C006  rjmp outColor            ; Jump to the outColor label
+   259: 
+   260: setTypeShower:
+   261: 0000A1   E0F2  ldi ZH, HIGH(showers*2)  ; Load the high byte of the memory address of 'showers' multiplied by 2 into ZH
+   262: 0000A2   E6EE  ldi ZL, LOW(showers*2)   ; Load the low byte of the memory address of 'showers' multiplied by 2 into ZL
+   263: 0000A3   C003  rjmp outColor            ; Jump to the outColor label
+   264: 
+   265: setTypeTstorms:
+   266: 0000A4   E0F2  ldi ZH, HIGH(tstorms*2)  ; Load the high byte of the memory address of 'tstorms' multiplied by 2 into ZH
+   267: 0000A5   E7E2  ldi ZL, LOW(tstorms*2)   ; Load the low byte of the memory address of 'tstorms' multiplied by 2 into ZL
+   268: 0000A6   C000  rjmp outColor            ; Jump to the outColor label
+   269: 
+   270: outColor:
+   271:     ; Load color values from program memory
+   272: 0000A7   9175  lpm WEATHER_TYPE, Z+     ; Load the green component from the program memory into WEATHER_TYPE and increment the Z register
+   273: 0000A8   9576  lsr WEATHER_TYPE         ; Logical shift right WEATHER_TYPE by 1 - This line and the ones like it that follow act as a way to lessen the brightness so it doesnt blind people  
+   274: 0000A9   9576  lsr WEATHER_TYPE         ; Logical shift right WEATHER_TYPE by 1
+   275: 0000AA   9576  lsr WEATHER_TYPE         ; Logical shift right WEATHER_TYPE by 1
+   276: 0000AB   9576  lsr WEATHER_TYPE         ; Logical shift right WEATHER_TYPE by 1
+   277: 0000AC   940E  call sendByte            ; Call the sendByte subroutine
+        0000AD   00C1
+   278: 
+   279: 0000AE   9175  lpm WEATHER_TYPE, Z+     ; Load the red component from the program memory into WEATHER_TYPE and increment the Z register
+   280: 0000AF   9576  lsr WEATHER_TYPE         ; Logical shift right WEATHER_TYPE by 1
+   281: 0000B0   9576  lsr WEATHER_TYPE         ; Logical shift right WEATHER_TYPE by 1
+   282: 0000B1   9576  lsr WEATHER_TYPE         ; Logical shift right WEATHER_TYPE by 1
+   283: 0000B2   9576  lsr WEATHER_TYPE         ; Logical shift right WEATHER_TYPE
+   284: 0000B3   940E  call sendByte
+        0000B4   00C1
+   285:     
+   286: 0000B5   9175  lpm WEATHER_TYPE, Z+     ; Load the blue component from the program memory into WEATHER_TYPE and increment the Z register
+   287: 0000B6   9576  lsr WEATHER_TYPE         ; Logical shift right WEATHER_TYPE by 1
+   288: 0000B7   9576  lsr WEATHER_TYPE         ; Logical shift right WEATHER_TYPE by 1
+   289: 0000B8   9576  lsr WEATHER_TYPE         ; Logical shift right WEATHER_TYPE by 1
+   290: 0000B9   9576  lsr WEATHER_TYPE         ; Logical shift right WEATHER_TYPE by 1
+   291: 0000BA   940E  call sendByte            ; Call the sendByte subroutine
+        0000BB   00C1
+   292: 
+   293: 0000BC   3080  cpi LED_COUNT, 0         ; Compare the value of LED_COUNT with 0
+   294: 0000BD   F699  brne setNeoWeather       ; Branch to setNeoWeather if LED_COUNT is not equal to 0
+   295: 0000BE   C000  rjmp endSet              ; Jump to the endSet label
+   296: 
+   297: endSet:
+   298: 0000BF   910F  pop r16                  ; Pop the value from the stack into register r16
+   299: 0000C0   9508  ret                      ; Return from the subroutine
+   300: 
+   301: ;-----------------------------------------------------------------------------------
+   302: ; SEND COLOR SUBROUTINE:
+   303: ; ----------------------
+   304: sendByte:
+   305: 0000C1   931F  push r17               ; Push the value of register r17 onto the stack
+   306: 0000C2   E019  ldi r17, 9             ; Load the value 9 into register r17 acts as the count - Needs to be 9 because G, R, and B each need one byte to represent their color
+   307: 
+   308: bitSend:
+   309: 0000C3   951A  dec r17                ; Decrement the value of register r17 by 1
+   310: 0000C4   3010  cpi r17, $00           ; Compare the value in register r17 with 0
+   311: 0000C5   F189  breq endSend           ; Branch to endSend if they are equal
+   312: 
+   313: 0000C6   0F77  lsl WEATHER_TYPE       ; Logical shift left WEATHER_TYPE by 1
+   314: 0000C7   F008  brcs sendOne           ; Branch to sendOne if the carry flag is set
+   315: 0000C8   C017  rjmp sendZero          ; Jump to sendZero
+   316: 
+   317: 
+   318: sendOne:
+   319: 0000C9   9A5A  sbi PORTD, 2           ; Set bit 2 of PORTD 
+   320: 0000CA   0000  nop
+   321: 0000CB   0000  nop
+   322: 0000CC   0000  nop
+   323: 0000CD   0000  nop
+   324: 0000CE   0000  nop
+   325: 0000CF   0000  nop
+   326: 0000D0   0000  nop
+   327: 0000D1   0000  nop
+   328: 0000D2   0000  nop
+   329: 0000D3   0000  nop
+   330: 0000D4   985A  cbi PORTD, 2           ; Clear bit 2 of PORTD
+   331: 0000D5   0000  nop
+   332: 0000D6   0000  nop
+   333: 0000D7   0000  nop
+   334: 0000D8   0000  nop
+   335: 0000D9   0000  nop
+   336: 0000DA   0000  nop
+   337: 0000DB   0000  nop
+   338: 0000DC   0000  nop
+   339: 0000DD   0000  nop
+   340: 0000DE   0000  nop
+   341: 0000DF   CFE3  rjmp bitSend           ; Jump back to bitSend
+   342: 
+   343: sendZero:
+   344: 0000E0   9A5A  sbi PORTD, 2           ; Set bit 2 of PORTD
+   345: 0000E1   0000  nop
+   346: 0000E2   0000  nop
+   347: 0000E3   0000  nop
+   348: 0000E4   0000  nop
+   349: 0000E5   0000  nop
+   350: 0000E6   985A  cbi PORTD, 2           ; Clear bit 2 of PORTD
+   351: 0000E7   0000  nop
+   352: 0000E8   0000  nop
+   353: 0000E9   0000  nop
+   354: 0000EA   0000  nop
+   355: 0000EB   0000  nop
+   356: 0000EC   0000  nop
+   357: 0000ED   0000  nop
+   358: 0000EE   0000  nop
+   359: 0000EF   0000  nop
+   360: 0000F0   0000  nop
+   361: 0000F1   0000  nop
+   362: 0000F2   0000  nop
+   363: 0000F3   0000  nop
+   364: 0000F4   0000  nop
+   365: 0000F5   0000  nop
+   366: 0000F6   CFCC  rjmp bitSend           ; Jump back to bitSend
+   367: 
+   368: endSend:
+   369: 0000F7   911F  pop r17                ; Pop the value from the stack into register r17
+   370: 0000F8   9508  ret                    ; Return from the subroutine
+   371: 
+   372: ;----------------------------------------------------------------------------------
+   373: ; NEOPIXEL RESET SUBROUTINE:
+   374: ; --------------------------
+   375: resetPixels:
+   376: 0000F9   930F  push r16               ; Push the value of register r16 onto the stack
+   377: 0000FA   931F  push r17               ; Push the value of register r17 onto the stack
+   378: 
+   379: 0000FB   E118  ldi r17, 24            ; Load the value 24 into register r17
+   380: 
+   381: loopPixels:
+   382: 0000FC   951A  dec r17                ; Decrement the value of register r17 by 1
+   383: 
+   384: 0000FD   E000  ldi r16, $00           ; Load the value $00 into register r16
+   385: 0000FE   940E  call sendByte          ; Call the sendByte subroutine
+        0000FF   00C1
+   386: 000100   E000  ldi r16, $00           ; Load the value $00 into register r16
+   387: 000101   940E  call sendByte          ; Call the sendByte subroutine
+        000102   00C1
+   388: 000103   E000  ldi r16, $00           ; Load the value $00 into register r16
+   389: 000104   940E  call sendByte          ; Call the sendByte subroutine
+        000105   00C1
+   390: 
+   391: 000106   3010  cpi r17, 0             ; Compare the value in register r17 with 0
+   392: 000107   F7A1  brne loopPixels        ; Branch to loopPixels if they are not equal
+   393: 
+   394: 000108   E001  ldi r16, 1             ; Load the value 1 into register r16
+   395: 000109   940E  call wait_xms          ; Call the wait_xms subroutine
+        00010A   012C
+   396: 00010B   C000  rjmp endReset          ; Jump to the endReset label
+   397: 
+   398: endReset:
+   399: 00010C   911F  pop r17                ; Pop the value from the stack into register r17
+   400: 00010D   910F  pop r16                ; Pop the value from the stack into register r16
+   401: 00010E   9508  ret                    ; Return from the subroutine
+   402: 
+   403: ;----------------------------------------------------------------------------------
+   404: ; USART INITIALZATION:
+   405: ; --------------------
+   406: ; Pulled from pg. 149 of ATmega328P data sheet
+   407: ; Sets USART to 9600 baud, Tx/Rx, 8bit, 2stop bit
+   408: ; Interupts enabled!
+   409: ; Baud rate: this is how fast the serial connection 'talks' 
+   410: ;            both sides need to know ahead of time this number
+   411: ;            a higher baud rate results in 'faster' communication
+   412: ; UBRR0H/L : USART Baud Rate Register 19.10.5 (see table 19-12, for 16MHz baud calc)
+   413: ; UCSR0B   : USART Control and Status Register 0 B 19.10.3
+   414: ;            this enables / disables RX/TX (kind of like setting DDRn)
+   415: ; UCSR0C   : USART Control and Status Register 0 C 19.10.3
+   416: ;            sets the 'shape' of the signal (how many bits / stop bits / pairity)
+   417: ; Need to use sts / lds because USART registers are in 'extended' I/O range (in / out is too restrictive)
+   418: USART_Init:
+   419: 00010F   930F  push r16 ; Save r16 / r17 just in case
+   420: 000110   931F  push r17
+   421: 
+   422:     ; Set baud rate
+   423: 000111   E010  ldi r17, $00 ; High baud (aiming for 9600bps)
+   424: 000112   E607  ldi r16, $67 ; Low baud
+   425: 000113   9310  sts UBRR0H, r17
+        000114   00C5
+   426: 000115   9300  sts UBRR0L, r16
+        000116   00C4
+   427: 
+   428:     ; Enable receiver and transmitter
+   429: 000117   E900  ldi r16, (1<<RXEN0)|(1<<RXCIE0) ; Turn on RX/TX and set up Receive interrupt
+   430: 000118   9300  sts UCSR0B, r16
+        000119   00C1
+   431: 
+   432:     ; Set frame format: 8data, 2stop bit
+   433: 00011A   E00E  ldi r16, (1<<USBS0)|(0<<UPM00)|(3<<UCSZ00)
+   434: 00011B   9300  sts UCSR0C, r16
+        00011C   00C2
+   435: 
+   436: 00011D   911F  pop r17 ; Restore r17 and r16
+   437: 00011E   910F  pop r16
+   438: 00011F   9508  ret     ; go back to where this was called
+   439: 
+   440: 
+   441: ;---------------------------------------------------------------------------------
+   442: ; DELAY SUBROUTINE:
+   443: ; -----------------
+   444: ; nop delay for approx 1ms
+   445: ; target:     0.001
+   446: ; one cycle  ~0.0000000625
+   447: ; 0.001 / x = 0.0000000625
+   448: ; x = 16,000
+   449: ; 16,000 / 256 = ~62
+   450: ; If we loop through 256 nop loops 62 times, we should be good
+   451: wait_1ms:
+   452: 000120   930F  push r16
+   453: 000121   931F  push r17
+   454: 
+   455: 000122   2700  clr r16
+   456: 000123   2711  clr r17
+   457: 
+   458: wait_1ms_outerLoop:
+   459: wait_1ms_inner: ; This should run 256 times taking aprox 1 + 1 cycles
+   460: 000124   9503  inc r16
+   461: 000125   F7F1  brne wait_1ms_inner
+   462: 
+   463: 000126   9513  inc r17
+   464: 000127   311E  cpi r17, 30 ; Only need to loop 30 times because inner loop is two cycles (thus twice as long as expected)
+   465: 000128   F7D9  brne wait_1ms_outerLoop
+   466: 
+   467: 
+   468: 000129   911F  pop r17
+   469: 00012A   910F  pop r16
+   470: 00012B   9508  ret
+   471: 
+   472: ;---------------------------------------------------------------------------------
+   473: ; Wait x ms, where r16 is holding x
+   474: wait_xms:
+   475: 00012C   930F  push r16 ;Save state of r16
+   476: 
+   477: wait_xms_loop:
+   478: 00012D   940E  call wait_1ms ; should wait 1 ms per call
+        00012E   0120
+   479: 00012F   950A  dec r16 ; Loop r16 times
+   480: 000130   F7E1  brne wait_xms_loop
+   481: 
+   482: 000131   910F  pop r16 ; restore
+   483: 000132   9508  ret
+   484: ;---------------------------------------------------------------------------------
+   485: ; Program Memory setup for Weather
+   486: ; Values that represent the color of each weather type 
+   487: ; Will be saved as a constant and used to output to NeoPixel Ring
+   488: ; Colors on ring are reveived as Green bits - Red bits - Blue bits
+   489: ; EX: g7 - g6 - g5 - g4 - g3 - g2 - g1 - g0 ... then red, then blue 
+   490: clear: .db $00, $ff, $ff    ; Neopixel color value for clear weather type 0026E6 or blue use lpm to access - lpm indexes into a half memory location program memory in word chunks 
+ -> Warning 004: Number of bytes on line is odd, added 00 to fit program memory!
+   File: C:\Users\cadec\OneDrive\Desktop\SophSpring\CS278\Final_Project_gimli/source/main.asm, Line: 490
+   Source line: clear: .db $00, $ff, $ff    ; Neopixel color value for clear weather type 0026E6 or blue use lpm to access - lpm indexes into a half memory location program memory in word chunks 
+        000133 FF00 00FF
+   491: overcast: .db $00, $ff, $ff 	; Neopixel color value for overcast weather type 8C999C or gray
+ -> Warning 004: Number of bytes on line is odd, added 00 to fit program memory!
+   File: C:\Users\cadec\OneDrive\Desktop\SophSpring\CS278\Final_Project_gimli/source/main.asm, Line: 491
+   Source line: overcast: .db $00, $ff, $ff 	; Neopixel color value for overcast weather type 8C999C or gray
+        000135 FF00 00FF
+   492: showers: .db $00, $ff, $ff   ; Neopixel color value for showers 8C999C or electric green!
+ -> Warning 004: Number of bytes on line is odd, added 00 to fit program memory!
+   File: C:\Users\cadec\OneDrive\Desktop\SophSpring\CS278\Final_Project_gimli/source/main.asm, Line: 492
+   Source line: showers: .db $00, $ff, $ff   ; Neopixel color value for showers 8C999C or electric green!
+        000137 FF00 00FF
+   493: tstorms: .db $00, $ff, $ff   ; Neopixel color value for thunderstorms 8C999C or pumpkin orage!
+ -> Warning 004: Number of bytes on line is odd, added 00 to fit program memory!
+   File: C:\Users\cadec\OneDrive\Desktop\SophSpring\CS278\Final_Project_gimli/source/main.asm, Line: 493
+   Source line: tstorms: .db $00, $ff, $ff   ; Neopixel color value for thunderstorms 8C999C or pumpkin orage!
+        000139 FF00 00FF
+   494: 
+   495: ; Data sheet for neopixels 
+   496: ; Neo pixel libraries (.h files)
+   497: ; Guess and check
+   498: ; 800 khz data transmit
+   499: ; GRB instead of RGB
+   500: ; How many nops = enough time 
+   501: ; .3 0 about 5 nops
+   502: ; .9 - about 15 nops
+   503: ; 6 = about 10 nops
+
+Program             :      307 words.
+Constants           :        8 words.
+Total program memory:      315 words.
+Eeprom space        :        0 bytes.
+Data segment        :        0 bytes.
+Compilation completed, no errors.
+Compilation ended 18.05.2023, 18:26:20
