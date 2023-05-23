@@ -19,7 +19,7 @@
 
 
 .DEVICE ATmega328p ;Define the correct device
-;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;
 ;; Interrupt Vectors ;;
 ;;;;;;;;;;;;;;;;;;;;;;;
 
